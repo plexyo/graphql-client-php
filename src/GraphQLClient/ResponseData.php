@@ -2,19 +2,14 @@
 
 namespace GraphQLClient;
 
-/**
- * Class ResponseData
- *
- * @package GraphQLClient
- */
 class ResponseData
 {
-    /** @var mixed */
+    /**
+     * @var mixed
+     */
     private $data;
 
     /**
-     * ResponseData constructor.
-     *
      * @param mixed $data
      */
     public function __construct($data)

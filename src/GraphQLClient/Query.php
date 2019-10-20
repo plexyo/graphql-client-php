@@ -4,8 +4,16 @@ namespace GraphQLClient;
 
 class Query extends Field
 {
+    /**
+     * @var array
+     */
     private $params;
 
+    /**
+     * @param string $name
+     * @param array  $params
+     * @param array  $fields
+     */
     public function __construct(string $name, array $params = [], array $fields = [])
     {
         parent::__construct($name, $fields);
@@ -21,10 +29,11 @@ class Query extends Field
     }
 
     /**
-     * @param array|Variable[] $variables
+     * @param Variable[] $variables
+     *
      * @return string
      */
-    public function getQueryHeader(array $variables)
+    public function getQueryHeader(array $variables): string
     {
         if (!count($variables)) {
             return '';

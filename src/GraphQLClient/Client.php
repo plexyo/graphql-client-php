@@ -6,26 +6,67 @@ use PHPUnit\Framework\Assert;
 
 abstract class Client
 {
-    /** @var string */
+    /**
+     * @var string
+     */
     protected $baseUrl;
 
-    /** @var array */
+    /**
+     * @var Variable[]
+     */
     protected $variables;
 
-    public function __construct(string $baseUrl) {
+    /**
+     * @param string $baseUrl
+     */
+    public function __construct(string $baseUrl)
+    {
         $this->baseUrl = $baseUrl;
         $this->variables = [];
     }
 
-    private function getQueryData(Query $query): array
+    /**
+     * @param Query      $query
+     * @param string     $path
+     * @param array|null $multipart
+     *
+     * @return ResponseData
+     */
+    public function mutate(Query $query, string $path = '/', array $multipart = null): ResponseData
     {
-        $queryString = 'query { ' . $this->getQueryString($query) . ' }';
-        return [
-            'query' => $queryString,
-            'variables' => null
-        ];
+        $response = $this->executeQuery($this->getMutationData($query), $path, $multipart);
+        return new ResponseData($response['data'][$query->getName()]);
     }
 
+    /**
+     * @param array      $data
+     * @param string     $path
+     * @param array|null $multipart
+     *
+     * @return array
+     */
+    public function executeQuery(array $data, string $path = '/', array $multipart = null)
+    {
+        if (is_array($multipart)) {
+            $data = array_merge(['operations' => json_encode($data)], $multipart);
+        }
+
+        return $this->postQuery($data, $path);
+    }
+
+    /**
+     * @param array  $data
+     * @param string $path
+     *
+     * @return array
+     */
+    abstract protected function postQuery(array $data, string $path): array;
+
+    /**
+     * @param Query $query
+     *
+     * @return array
+     */
     private function getMutationData(Query $query): array
     {
         $queryBody = $this->getQueryString($query);
@@ -37,62 +78,15 @@ abstract class Client
 
         return [
             'query' => $queryString,
-            'variables' => $this->getVariableContent($this->variables)
+            'variables' => $this->getVariableContent($this->variables),
         ];
     }
 
-    private function fieldToString(Field $field): string
-    {
-        $result = $field->getName();
-
-        if (!empty($field->getChildren())) {
-            $children = '';
-            foreach ($field->getChildren() as $child) {
-                $children .= $this->fieldToString($child);
-            }
-            $result .= sprintf(' { %s }', $children);
-        }
-
-        $result .=  PHP_EOL;
-
-        return $result;
-    }
-
-    private function hasStringKeys(array $array):bool
-    {
-        return count(array_filter(array_keys($array), 'is_string')) > 0;
-    }
-
     /**
-     * @param array $params
+     * @param Field $query
+     *
      * @return string
      */
-    private function getParamString(array $params): string
-    {
-        $result = '';
-
-        foreach ($params as $key => $value) {
-            if (is_string($key)) {
-                $result .= $key . ' : ';
-            }
-            if (is_array($value)) {
-                if ($this->hasStringKeys($value)) {
-                    $result .= sprintf('{ %s } ', $this->getParamString($value));
-                } else {
-                    $result .= sprintf('[ %s ] ', $this->getParamString($value));
-                }
-            } else if ($value instanceof Variable) {
-                $result .= sprintf('$%s ', $value->getName());
-                $this->variables[$value->getName()] = $value;
-            } else {
-                $result .= sprintf('%s ', json_encode($value));
-            }
-
-        }
-
-        return $result;
-    }
-
     private function getQueryString(Field $query): string
     {
         $fieldString = '';
@@ -108,35 +102,93 @@ abstract class Client
 
         $paramString = '';
         if ($query instanceof Query) {
-            $paramString = '(' . $this->getParamString($query->getParams()) . ')';
-        }
-        $queryString = sprintf('%s%s %s', $query->getName(), $paramString, $fieldString);
-
-
-        return $queryString;
-
-    }
-
-    public function executeQuery(array $data, array $multipart = null)
-    {
-        if (is_array($multipart)) {
-            $data = array_merge(['operations' => json_encode($data)], $multipart);
+            $paramString = '('.$this->getParamString($query->getParams()).')';
         }
 
-        return $this->postQuery($data);
+        return sprintf('%s%s %s', $query->getName(), $paramString, $fieldString);
     }
 
-    public function mutate(Query $query, array $multipart = null): ResponseData
+    /**
+     * @param array $params
+     *
+     * @return string
+     */
+    private function getParamString(array $params): string
     {
-        $response = $this->executeQuery($this->getMutationData($query), $multipart);
-        return new ResponseData($response['data'][$query->getName()]);
+        $result = '';
+
+        foreach ($params as $key => $value) {
+            if (is_string($key)) {
+                $result .= $key.' : ';
+            }
+            if (is_array($value)) {
+                if ($this->hasStringKeys($value)) {
+                    $result .= sprintf('{ %s } ', $this->getParamString($value));
+                } else {
+                    $result .= sprintf('[ %s ] ', $this->getParamString($value));
+                }
+            } elseif ($value instanceof Variable) {
+                $result .= sprintf('$%s ', $value->getName());
+                $this->variables[$value->getName()] = $value;
+            } else {
+                $result .= sprintf('%s ', json_encode($value));
+            }
+
+        }
+
+        return $result;
     }
 
-    public function query(Query $query):ResponseData
+    /**
+     * @param array $array
+     *
+     * @return bool
+     */
+    private function hasStringKeys(array $array): bool
+    {
+        return count(array_filter(array_keys($array), 'is_string')) > 0;
+    }
+
+    /**
+     * @param Variable[] $variables
+     *
+     * @return array
+     */
+    private function getVariableContent(array $variables): array
+    {
+        $result = [];
+
+        foreach ($variables as $variable) {
+            $result[$variable->getName()] = $variable->getValue();
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param Query $query
+     *
+     * @return ResponseData
+     */
+    public function query(Query $query): ResponseData
     {
         $response = $this->executeQuery($this->getQueryData($query));
 
         return new ResponseData($response['data'][$query->getName()]);
+    }
+
+    /**
+     * @param Query $query
+     *
+     * @return array
+     */
+    private function getQueryData(Query $query): array
+    {
+        $queryString = 'query { '.$this->getQueryString($query).' }';
+        return [
+            'query' => $queryString,
+            'variables' => null,
+        ];
     }
 
     /**
@@ -148,28 +200,21 @@ abstract class Client
     }
 
     /**
-     * @param array|Variable[] $variables
-     * @return array
+     * @param array $fields
+     * @param Query $query
      */
-    private function getVariableContent(array $variables)
-    {
-        $result = [];
-
-        foreach ($variables as $variable) {
-            $result[$variable->getName()] = $variable->getValue();
-        }
-
-        return $result;
-    }
-
-    public function assertGraphQlFields(array $fields, Query $query)
+    public function assertGraphQlFields(array $fields, Query $query): void
     {
         foreach ($query->getChildren() as $field) {
             $this->assertFieldInArray($field, $fields);
         }
     }
 
-    protected function assertFieldInArray(Field $field, array $result)
+    /**
+     * @param Field $field
+     * @param array $result
+     */
+    protected function assertFieldInArray(Field $field, array $result): void
     {
         if ($this->hasStringKeys($result)) {
             Assert::assertArrayHasKey($field->getName(), $result);
@@ -185,5 +230,13 @@ abstract class Client
         }
     }
 
-    abstract protected function postQuery(array $data): array;
+    /**
+     * @param string $path
+     *
+     * @return string
+     */
+    protected function makeUrl(string $path = '/'): string
+    {
+        return rtrim($this->getBaseUrl(), '/').'/'.ltrim($path, '/');
+    }
 }
